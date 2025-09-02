@@ -1,0 +1,24 @@
+steps:
+  validate:
+    type: "validateStep"
+  processPayment:
+    type: "processStep"
+    config:
+      status: "success"
+      type: "Moderate"
+  sendNotification:
+    type: "notificationStep"
+    config:
+      template: "order-success"
+
+workflows:
+  orderFlow:
+    root: "validate"
+    edges:
+      - from: "validate"
+        to: "processPayment"
+      - from: "processPayment"
+        to: "sendNotification"
+        guard: "paymentSucceededGuard"
+      - from: "sendNotification"
+        to: "SUCCESS"

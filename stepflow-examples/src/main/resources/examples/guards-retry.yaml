@@ -1,0 +1,53 @@
+steps:
+  # Step-level guard example
+  validate:
+    type: "validateStep"
+  process:
+    type: "processStep"
+    config:
+      status: "SUCCESS"
+  notify:
+    type: "notificationStep"
+    guards: [ "paymentSucceededGuard" ]
+
+  # Engine-driven retry with retry.guard
+  unstable:
+    type: "unstable"
+    config:
+      succeedOnAttempt: 2
+    retry:
+      maxAttempts: 3
+      delay: 50
+      guard: "shouldRetryGuard"
+
+  # Internal retry handled by step (no retry.guard)
+  internalRetry:
+    type: "internalRetry"
+    config:
+      maxAttempts: 3
+      delayMs: 25
+      succeedOnAttempt: 2
+
+workflows:
+  stepGuardedFlow:
+    root: "validate"
+    edges:
+      - from: "validate"
+        to: "process"
+      - from: "process"
+        to: "notify"
+      - from: "notify"
+        to: "SUCCESS"
+
+  engineRetryFlow:
+    root: "unstable"
+    edges:
+      - from: "unstable"
+        to: "SUCCESS"
+
+  internalRetryFlow:
+    root: "internalRetry"
+    edges:
+      - from: "internalRetry"
+        to: "SUCCESS"
+

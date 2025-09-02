@@ -1,0 +1,119 @@
+package ${packageName};
+
+import com.stepflow.execution.ExecutionContext;
+import com.stepflow.execution.Step;
+import com.stepflow.execution.StepResult;
+import com.stepflow.core.annotations.StepComponent;
+#if($hasConfig)
+import com.stepflow.core.annotations.ConfigValue;
+#end
+#if($hasGuards)
+import com.stepflow.core.annotations.Inject;
+import com.stepflow.execution.Guard;
+import java.util.List;
+#end
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * Generated Step class for: ${componentName}
+ * 
+ * Workflows using this step: ${usedInWorkflows}
+ * Generated from YAML configuration on ${generationTimestamp}
+ */
+@StepComponent(name = "${annotationName}")
+public class ${className} implements Step {
+    
+    private static final Logger logger = LoggerFactory.getLogger(${className}.class);
+    
+#if($hasConfig)
+#foreach($configEntry in $configEntries)
+    @ConfigValue(value = "${configEntry.key}"#if($configEntry.required), required = ${configEntry.required}#end#if($configEntry.defaultValue), defaultValue = "${configEntry.defaultValue}"#end)
+    private ${configEntry.javaType} ${configEntry.fieldName};
+    
+#end
+#end
+#if($hasGuards)
+    @Inject
+    private List<Guard> guards;
+    
+#end
+    @Override
+    public StepResult execute(ExecutionContext ctx) {
+        logger.debug("Executing step: ${componentName}");
+        
+        try {
+#if($hasGuards)
+            // Validate guards before execution
+            if (guards != null && !guards.isEmpty()) {
+                for (Guard guard : guards) {
+                    if (!guard.evaluate(ctx)) {
+                        logger.warn("Guard failed for step: ${componentName}");
+                        return StepResult.failure("Guard validation failed");
+                    }
+                }
+            }
+            
+#end
+#if($hasComplexLogic)
+            // TODO: Implement complex business logic here
+            // This step appears to have complex configuration or is used in multiple workflows
+            // Consider the following configuration parameters:
+#foreach($configEntry in $configEntries)
+            // - ${configEntry.key}: ${configEntry.description}
+#end
+            
+            // Example implementation:
+            boolean success = performBusinessLogic(ctx);
+            
+            if (success) {
+                logger.info("Step ${componentName} completed successfully");
+                return StepResult.success(ctx);
+            } else {
+                logger.warn("Step ${componentName} failed during execution");
+                return StepResult.failure("Business logic execution failed");
+            }
+#else
+            // TODO: Implement your business logic here
+            // Simple step implementation
+            
+            logger.info("Step ${componentName} executed successfully");
+            return StepResult.success(ctx);
+#end
+            
+        } catch (Exception e) {
+            logger.error("Error executing step: ${componentName}", e);
+            return StepResult.failure("Execution error: " + e.getMessage());
+        }
+    }
+    
+#if($hasComplexLogic)
+    /**
+     * Performs the main business logic for this step
+     * @param ctx execution context
+     * @return true if successful, false otherwise
+     */
+    private boolean performBusinessLogic(ExecutionContext ctx) {
+        // TODO: Implement your specific business logic here
+        
+#foreach($configEntry in $configEntries)
+        // Use configuration: ${configEntry.fieldName} (${configEntry.javaType})
+#end
+        
+        return true; // Replace with actual logic
+    }
+    
+#end
+#if($hasConfig)
+#foreach($configEntry in $configEntries)
+    public ${configEntry.javaType} get${configEntry.capitalizedFieldName}() {
+        return ${configEntry.fieldName};
+    }
+    
+    public void set${configEntry.capitalizedFieldName}(${configEntry.javaType} ${configEntry.fieldName}) {
+        this.${configEntry.fieldName} = ${configEntry.fieldName};
+    }
+    
+#end
+#end
+}

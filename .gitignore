@@ -1,0 +1,5 @@
+.idea
+.DS_Store
+target/
+!**/src/main/**/target/
+!**/src/test/**/target/

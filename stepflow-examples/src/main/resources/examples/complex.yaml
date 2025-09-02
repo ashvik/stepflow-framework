@@ -1,0 +1,39 @@
+settings:
+  notifications:
+    template: "order-confirmation"
+
+defaults:
+  step:
+    timeout_ms: 3000
+  orderValueAboveGuard:
+    threshold: 100.0
+
+steps:
+  validate:
+    type: "validateStep"
+  process:
+    type: "processStep"
+  sendNotification:
+    type: "notificationStep"
+    config:
+      template: "{{ settings.notifications.template }}"
+  highValueHandler:
+    type: "notificationStep"
+    config:
+      template: "vip-order"
+
+workflows:
+  complexFlow:
+    root: "validate"
+    edges:
+      - from: "validate"
+        to: "process"
+      - from: "process"
+        to: "highValueHandler"
+        guard: "orderValueAboveGuard"
+      - from: "process"
+        to: "sendNotification"
+      - from: "highValueHandler"
+        to: "SUCCESS"
+      - from: "sendNotification"
+        to: "SUCCESS"

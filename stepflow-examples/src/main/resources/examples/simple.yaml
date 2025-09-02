@@ -1,0 +1,20 @@
+steps:
+  validate:
+    type: "validateStep"
+  process:
+    type: "processStep"
+  notify:
+    type: "notificationStep"
+  done:
+    type: "completeStep"
+
+workflows:
+  simpleFlow:
+    root: "validate"
+    edges:
+      - from: "validate"
+        to: "process"
+      - from: "process"
+        to: "notify"
+      - from: "notify"
+        to: "SUCCESS"

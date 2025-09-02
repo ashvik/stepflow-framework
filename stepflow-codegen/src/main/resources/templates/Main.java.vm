@@ -1,0 +1,23 @@
+package ${groupId};
+
+import com.stepflow.core.SimpleEngine;
+import com.stepflow.execution.ExecutionContext;
+
+/**
+ * Main entry point for ${projectName}
+ * 
+ * Generated from StepFlow CodeGen on ${generationTimestamp}
+ * Source YAML files: ${sourceFiles}
+ * 
+ * This class uses SimpleEngine to execute workflows from the bundled YAML configuration.
+ */
+public class Main {
+    
+    public static void main(String[] args) {
+        // Create SimpleEngine with bundled YAML from resources and generated components package
+        SimpleEngine engine = SimpleEngine.create("classpath:workflow.yaml", "com.stepflow.generated");
+        
+        // Execute the workflow with default name (first workflow in YAML)
+        engine.execute("${defaultWorkflowName}", new ExecutionContext());
+    }
+}

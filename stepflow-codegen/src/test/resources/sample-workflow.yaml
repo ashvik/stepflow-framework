@@ -1,0 +1,109 @@
+settings:
+  database:
+    url: "jdbc:postgresql://localhost:5432/orders"
+    timeout: 30000
+  notifications:
+    template: "order-confirmation"
+    email:
+      enabled: true
+      smtpHost: "smtp.company.com"
+  
+defaults:
+  step:
+    timeout_ms: 5000
+    retries: 3
+    logging: true
+  guard:
+    caching: true
+    timeout: 2000
+  orderValueGuard:
+    threshold: 100.0
+    currency: "USD"
+  validateOrderStep:
+    strictMode: true
+    validateInventory: true
+
+steps:
+  validateOrder:
+    type: "validateOrderStep"
+    config:
+      maxItemCount: 50
+      allowBackorders: false
+      requiredFields: 
+        - "customerId"
+        - "items"
+        - "shippingAddress"
+    guards:
+      - "authenticationGuard"
+      - "ratelimitGuard"
+    retry:
+      maxAttempts: 5
+      delay: 2000
+      guard: "shouldRetryValidation"
+      
+  processPayment:
+    type: "processPaymentStep" 
+    config:
+      paymentGateway: "stripe"
+      currency: "USD"
+      captureImmediately: true
+      webhookEnabled: true
+    guards:
+      - "paymentMethodValid"
+      - "fraudDetection"
+    retry:
+      maxAttempts: 3
+      delay: 5000
+      guard: "paymentRetryable"
+      
+  updateInventory:
+    type: "updateInventoryStep"
+    config:
+      reservationTimeout: 600000
+      allowPartialFulfillment: true
+      inventoryService: "{{ settings.inventory.serviceUrl }}"
+    guards:
+      - "inventoryAvailable"
+      
+  sendConfirmation:
+    type: "sendConfirmationStep"
+    config:
+      template: "{{ settings.notifications.template }}"
+      channels: ["email", "sms"] 
+      async: true
+      retryOnFailure: true
+    guards:
+      - "customerContactable"
+      
+  handleHighValue:
+    type: "handleHighValueStep"
+    config:
+      manualReview: true
+      approvalRequired: true
+      escalationTimeout: 3600000
+      notificationList: ["manager@company.com", "finance@company.com"]
+    guards:
+      - "highValueApprover"
+
+workflows:
+  orderProcessingFlow:
+    root: "validateOrder"
+    edges:
+      - from: "validateOrder"
+        to: "processPayment"
+        
+      - from: "processPayment" 
+        to: "handleHighValue"
+        guard: "orderValueGuard"
+        
+      - from: "processPayment"
+        to: "updateInventory"
+        
+      - from: "handleHighValue"
+        to: "updateInventory"
+        
+      - from: "updateInventory"
+        to: "sendConfirmation"
+        
+      - from: "sendConfirmation"
+        to: "SUCCESS"

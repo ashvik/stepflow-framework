@@ -1,0 +1,15 @@
+steps:
+  A:
+    type: "testStepPlain"
+  B:
+    type: "testStepPlain"
+
+workflows:
+  simpleTest:
+    root: "A"
+    edges:
+      - from: "A"
+        to: "B"
+      - from: "B"
+        to: "SUCCESS"
+

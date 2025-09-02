@@ -1,0 +1,96 @@
+package ${packageName};
+
+import com.stepflow.execution.ExecutionContext;
+import com.stepflow.execution.Guard;
+import com.stepflow.core.annotations.GuardComponent;
+#if($hasConfig)
+import com.stepflow.core.annotations.ConfigValue;
+#end
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * Generated Guard class for: ${componentName}
+ * 
+ * Workflows using this guard: ${usedInWorkflows}
+ * Generated from YAML configuration on ${generationTimestamp}
+ */
+@GuardComponent(name = "${annotationName}")
+public class ${className} implements Guard {
+    
+    private static final Logger logger = LoggerFactory.getLogger(${className}.class);
+    
+#if($hasConfig)
+#foreach($configEntry in $configEntries)
+    @ConfigValue(value = "${configEntry.key}"#if($configEntry.required), required = ${configEntry.required}#end#if($configEntry.defaultValue), defaultValue = "${configEntry.defaultValue}"#end)
+    private ${configEntry.javaType} ${configEntry.fieldName};
+    
+#end
+#end
+    @Override
+    public boolean evaluate(ExecutionContext ctx) {
+        logger.debug("Evaluating guard: ${componentName}");
+        
+        try {
+#if($hasComplexLogic)
+            // TODO: Implement complex guard logic here
+            // This guard appears to have complex configuration or is used in multiple workflows
+            // Consider the following configuration parameters:
+#foreach($configEntry in $configEntries)
+            // - ${configEntry.key}: ${configEntry.description}
+#end
+            
+            return performComplexEvaluation(ctx);
+#else
+            // TODO: Implement your guard logic here
+            // Simple guard implementation
+            
+            // Example: Check if a required value exists in context
+            Object value = ctx.get("${componentName}Required");
+            boolean result = value != null;
+            
+            logger.debug("Guard ${componentName} evaluation result: {}", result);
+            return result;
+#end
+            
+        } catch (Exception e) {
+            logger.error("Error evaluating guard: ${componentName}", e);
+            return false; // Fail-safe: return false on error
+        }
+    }
+    
+#if($hasComplexLogic)
+    /**
+     * Performs complex guard evaluation logic
+     * @param ctx execution context
+     * @return true if guard passes, false otherwise
+     */
+    private boolean performComplexEvaluation(ExecutionContext ctx) {
+        // TODO: Implement your specific guard logic here
+        
+#foreach($configEntry in $configEntries)
+        // Use configuration: ${configEntry.fieldName} (${configEntry.javaType})
+#end
+        
+        // Example complex evaluation:
+        // 1. Check multiple context values
+        // 2. Apply business rules
+        // 3. Validate against thresholds
+        
+        return true; // Replace with actual logic
+    }
+    
+#end
+#if($hasConfig)
+#foreach($configEntry in $configEntries)
+    public ${configEntry.javaType} get${configEntry.capitalizedFieldName}() {
+        return ${configEntry.fieldName};
+    }
+    
+    public void set${configEntry.capitalizedFieldName}(${configEntry.javaType} ${configEntry.fieldName}) {
+        this.${configEntry.fieldName} = ${configEntry.fieldName};
+    }
+    
+#end
+#end
+}

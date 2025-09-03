@@ -16,7 +16,7 @@ steps:
   sendNotification:
     type: "notificationStep"
     config:
-      template: "{{ settings.notifications.template }}"
+      template: "test"
   highValueHandler:
     type: "notificationStep"
     config:

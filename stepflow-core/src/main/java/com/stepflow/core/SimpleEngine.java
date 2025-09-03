@@ -5,6 +5,8 @@ import com.stepflow.config.FlowConfig;
 import com.stepflow.execution.*;
 import com.stepflow.resource.YamlResourceLoader;
 import com.stepflow.component.DependencyResolver;
+import com.stepflow.validation.*;
+import com.stepflow.validation.validators.*;
 
 import java.util.*;
 import org.yaml.snakeyaml.Yaml;
@@ -12,22 +14,116 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Unified engine providing simplified APIs for StepFlow workflow creation and execution.
+ * Unified engine providing simplified APIs for StepFlow workflow creation, validation, and execution.
  *
  * <p>SimpleEngine is the single entry point for all StepFlow functionality, combining
- * workflow-based YAML processing, external dependency management, and programmatic construction
- * into one cohesive interface.
+ * workflow-based YAML processing, comprehensive validation, external dependency management, 
+ * and programmatic construction into one cohesive interface.
  *
  * <p>Key Features:
  * <ul>
  *   <li><strong>Workflow-Based YAML:</strong> Enhanced YAML format supporting complex workflows</li>
+ *   <li><strong>Built-in Validation:</strong> Comprehensive FlowConfig validation with detailed error reporting</li>
  *   <li><strong>External Dependencies:</strong> Built-in support for Maven/Gradle dependencies</li>
  *   <li><strong>Automatic Discovery:</strong> Component scanning across local and external JARs</li>
  *   <li><strong>Fluent API:</strong> Programmatic workflow construction</li>
  *   <li><strong>Single Entry Point:</strong> Unified interface for all use cases</li>
  * </ul>
  *
- * <p>Usage Examples:
+ * <h2>FlowConfig Validation</h2>
+ * 
+ * <p>SimpleEngine includes integrated validation capabilities that detect configuration issues
+ * before workflow execution, enabling fail-fast development and robust production deployments.
+ *
+ * <h3>Built-in Validators:</h3>
+ * <ul>
+ *   <li><strong>Cycle Detection:</strong> Identifies circular dependencies in workflow graphs</li>
+ *   <li><strong>Edge Ordering:</strong> Validates that unguarded edges are positioned last and unique per step</li>
+ * </ul>
+ *
+ * <h3>Validation Usage Examples:</h3>
+ *
+ * <p><strong>Basic Validation:</strong>
+ * <pre>
+ * SimpleEngine engine = SimpleEngine.create("workflow.yaml");
+ * ValidationResult result = engine.validateConfiguration();
+ * 
+ * if (!result.isValid()) {
+ *     System.err.println("Configuration issues found:");
+ *     System.err.println(result.getErrorSummary());
+ *     // Fix issues before execution
+ * } else {
+ *     // Safe to execute workflows
+ *     engine.execute("workflowName", context);
+ * }
+ * </pre>
+ *
+ * <p><strong>Validation-First Execution Pattern:</strong>
+ * <pre>
+ * try {
+ *     SimpleEngine engine = SimpleEngine.create("workflow.yaml");
+ *     engine.validateConfigurationOrThrow(); // Fail fast if invalid
+ *     
+ *     // Configuration is valid - safe to execute
+ *     StepResult result = engine.execute("workflowName", context);
+ * } catch (ValidationException e) {
+ *     System.err.println("Validation failed: " + e.getDetailedMessage());
+ *     // Handle validation errors
+ * }
+ * </pre>
+ *
+ * <p><strong>Single Workflow Validation:</strong>
+ * <pre>
+ * SimpleEngine engine = SimpleEngine.create("workflow.yaml");
+ * ValidationResult result = engine.validateWorkflow("specificWorkflow");
+ * 
+ * if (result.isValid()) {
+ *     // Only this workflow is valid
+ * }
+ * </pre>
+ *
+ * <p><strong>Custom Validation Configuration:</strong>
+ * <pre>
+ * // Using builder pattern
+ * SimpleEngine engine = SimpleEngine.builder()
+ *     .withExternalYamls("workflow.yaml")
+ *     .withPackages("com.example")
+ *     .withCustomValidation(validationBuilder -> validationBuilder
+ *         .addValidator(new CycleDetectionValidator())
+ *         .addValidator(new EdgeOrderingValidator())
+ *         .addValidator(new CustomBusinessRuleValidator())
+ *         .enableCaching(true))
+ *     .build();
+ * 
+ * // Or using custom validation engine
+ * FlowConfigValidationEngine customValidator = FlowConfigValidationEngine.builder()
+ *     .addValidator(new CycleDetectionValidator())
+ *     .addValidator(new MyBusinessRuleValidator())
+ *     .build();
+ *     
+ * SimpleEngine engine = SimpleEngine.create("workflow.yaml", customValidator, "com.example");
+ * </pre>
+ *
+ * <h3>Validation Error Examples:</h3>
+ *
+ * <p><strong>Cycle Detection:</strong>
+ * <pre>
+ * ERROR: Circular dependency detected in workflow 'orderProcessing': validate → process → audit → validate
+ * Details:
+ *   cyclePath: [validate, process, audit, validate]
+ *   involvedEdges: [validate → process, process → audit [guard: auditRequired], audit → validate]
+ * </pre>
+ *
+ * <p><strong>Edge Ordering Violation:</strong>
+ * <pre>
+ * ERROR: Step 'process' has unguarded edge at position 1, but 2 guarded edge(s) come after it
+ * Details:
+ *   unguardedEdge: process → notify [no guard]
+ *   violatingEdges: [process → audit [guard: auditRequired]]
+ *   expectedPosition: last
+ * </pre>
+ *
+ * <h2>Traditional Usage Examples</h2>
  *
  * <p><strong>Local Workflow:</strong>
  * <pre>
@@ -38,9 +134,8 @@ import org.slf4j.LoggerFactory;
  * <p><strong>With External Dependencies:</strong>
  * <pre>
  * SimpleEngine engine = SimpleEngine.builder()
- *     .withWorkflow("my-workflow.yaml")
- *     .withExternalSteps("com.example.steps", "order-steps.yaml")
- *     .withExternalGuards("com.security.guards", "auth-guards.yaml")
+ *     .withExternalYamls("my-workflow.yaml")
+ *     .withPackages("com.example.steps", "com.security.guards")
  *     .build();
  * </pre>
  *
@@ -51,6 +146,16 @@ import org.slf4j.LoggerFactory;
  *     .then("process").using("processPayment").with("gateway", "stripe")
  *     .end().build();
  * </pre>
+ *
+ * <h2>Validation Methods Reference</h2>
+ * <ul>
+ *   <li><strong>{@link #validateConfiguration()}</strong> - Validates entire FlowConfig</li>
+ *   <li><strong>{@link #validateConfiguration(boolean)}</strong> - Validates with fail-fast option</li>
+ *   <li><strong>{@link #validateWorkflow(String)}</strong> - Validates single workflow</li>
+ *   <li><strong>{@link #validateConfigurationOrThrow()}</strong> - Validates and throws on failure</li>
+ *   <li><strong>{@link #getValidationInfo()}</strong> - Gets validator information</li>
+ *   <li><strong>{@link #clearValidationCache()}</strong> - Clears validation cache</li>
+ * </ul>
  *
  * @author StepFlow Team
  * @version 3.0
@@ -73,6 +178,9 @@ public class SimpleEngine {
     /** Configuration for external resources */
     private final List<String> externalResources = new ArrayList<>();
     private final Set<String> scannedPackages = new HashSet<>();
+    
+    /** Validation engine for FlowConfig validation */
+    private final FlowConfigValidationEngine validationEngine;
 
     /**
      * Creates a SimpleEngine with the specified FlowConfig and scan packages.
@@ -82,6 +190,7 @@ public class SimpleEngine {
      */
     private SimpleEngine(FlowConfig config, String... scanPackages) {
         this.engine = new Engine(config, scanPackages);
+        this.validationEngine = FlowConfigValidationEngine.createDefault();
     }
 
     /**
@@ -93,8 +202,42 @@ public class SimpleEngine {
      */
     private SimpleEngine(FlowConfig config, List<String> externalResources, String... scanPackages) {
         this.engine = new Engine(config, scanPackages);
+        this.validationEngine = FlowConfigValidationEngine.createDefault();
         this.externalResources.addAll(externalResources);
         discoverAndRegisterExternalComponents();
+    }
+    
+    /**
+     * Creates a SimpleEngine with custom validation engine.
+     *
+     * @param config the FlowConfig containing workflow definitions
+     * @param validationEngine custom validation engine with specific validators
+     * @param scanPackages optional package prefixes to scan for components
+     */
+    private SimpleEngine(FlowConfig config, FlowConfigValidationEngine validationEngine, String... scanPackages) {
+        this.engine = new Engine(config, scanPackages);
+        this.validationEngine = validationEngine;
+    }
+    
+    /**
+     * Package-private constructor for testing purposes.
+     *
+     * @param config the FlowConfig containing workflow definitions
+     */
+    SimpleEngine(FlowConfig config) {
+        this.engine = new Engine(config);
+        this.validationEngine = FlowConfigValidationEngine.createDefault();
+    }
+    
+    /**
+     * Package-private constructor for testing purposes with custom validation.
+     *
+     * @param config the FlowConfig containing workflow definitions
+     * @param validationEngine custom validation engine
+     */
+    SimpleEngine(FlowConfig config, FlowConfigValidationEngine validationEngine) {
+        this.engine = new Engine(config);
+        this.validationEngine = validationEngine;
     }
 
     // ======================================================================================
@@ -133,6 +276,22 @@ public class SimpleEngine {
         FlowConfig config = convertYamlToFlowConfig(yamlData);
         LOGGER.info("SimpleEngine created from YAML: {} with packages {}", resourcePath, Arrays.toString(scanPackages));
         return new SimpleEngine(config, scanPackages);
+    }
+    
+    /**
+     * Creates a SimpleEngine from a workflow YAML file with custom validation engine.
+     *
+     * @param resourcePath path to the workflow YAML file
+     * @param validationEngine custom validation engine with specific validators
+     * @param scanPackages package prefixes to scan for components
+     * @return a fully configured SimpleEngine ready for execution
+     */
+    public static SimpleEngine create(String resourcePath, FlowConfigValidationEngine validationEngine, String... scanPackages) {
+        YamlResourceLoader loader = new YamlResourceLoader();
+        Map<String, Object> yamlData = loader.loadYaml(resourcePath);
+        FlowConfig config = convertYamlToFlowConfig(yamlData);
+        LOGGER.info("SimpleEngine created from YAML: {} with custom validation engine", resourcePath);
+        return new SimpleEngine(config, validationEngine, scanPackages);
     }
 
     /**
@@ -209,6 +368,228 @@ public class SimpleEngine {
 
     public FlowConfig getFlowConfig() {
         return engine.getConfig();
+    }
+    
+    // ======================================================================================
+    // VALIDATION METHODS - Integrated FlowConfig Validation
+    // ======================================================================================
+    
+    /**
+     * Validates the current FlowConfig for structural and configuration issues.
+     * 
+     * <p>This method runs comprehensive validation checks including:
+     * <ul>
+     *   <li>Cycle detection in workflow graphs</li>
+     *   <li>Edge ordering validation (unguarded edges must be last)</li>
+     *   <li>Step and guard reference validation</li>
+     *   <li>Workflow structure validation</li>
+     * </ul>
+     * 
+     * <p>Usage example:
+     * <pre>
+     * SimpleEngine engine = SimpleEngine.create("workflow.yaml");
+     * ValidationResult result = engine.validateConfiguration();
+     * 
+     * if (!result.isValid()) {
+     *     System.err.println("Configuration issues found:");
+     *     System.err.println(result.getErrorSummary());
+     *     // Fix issues before execution
+     * } else {
+     *     // Safe to execute workflows
+     *     engine.execute("workflowName", context);
+     * }
+     * </pre>
+     * 
+     * @return comprehensive validation result with errors, warnings, and metadata
+     */
+    public ValidationResult validateConfiguration() {
+        LOGGER.debug("Validating FlowConfig with {} workflow(s)", 
+                    getFlowConfig().workflows != null ? getFlowConfig().workflows.size() : 0);
+        
+        ValidationResult result = validationEngine.validate(getFlowConfig());
+        
+        if (result.isValid()) {
+            LOGGER.info("FlowConfig validation passed successfully");
+        } else {
+            LOGGER.warn("FlowConfig validation failed with {} error(s), {} warning(s)",
+                       result.getErrors().size(), result.getWarnings().size());
+        }
+        
+        return result;
+    }
+    
+    /**
+     * Validates the current FlowConfig with fail-fast behavior.
+     * 
+     * <p>This method stops validation on the first critical error, providing
+     * faster feedback for severely broken configurations.
+     * 
+     * @param failFast if true, stop validation on first critical error
+     * @return validation result with errors found up to the first critical failure
+     */
+    public ValidationResult validateConfiguration(boolean failFast) {
+        LOGGER.debug("Validating FlowConfig with fail-fast={}", failFast);
+        
+        ValidationResult result = validationEngine.validate(getFlowConfig(), failFast);
+        
+        if (result.isValid()) {
+            LOGGER.info("FlowConfig validation passed successfully");
+        } else {
+            LOGGER.warn("FlowConfig validation failed with {} error(s), {} warning(s){}",
+                       result.getErrors().size(), result.getWarnings().size(),
+                       failFast ? " (fail-fast mode)" : "");
+        }
+        
+        return result;
+    }
+    
+    /**
+     * Validates a specific workflow within the current FlowConfig.
+     * 
+     * <p>This method creates a temporary FlowConfig containing only the specified
+     * workflow and its dependencies, then validates it. Useful for validating
+     * individual workflows without checking the entire configuration.
+     * 
+     * @param workflowName the name of the workflow to validate
+     * @return validation result for the specific workflow
+     * @throws IllegalArgumentException if the workflow doesn't exist
+     */
+    public ValidationResult validateWorkflow(String workflowName) {
+        FlowConfig fullConfig = getFlowConfig();
+        
+        if (fullConfig.workflows == null || !fullConfig.workflows.containsKey(workflowName)) {
+            return ValidationResult.failure(
+                ValidationError.builder(ValidationErrorType.UNDEFINED_STEP)
+                    .workflowName(workflowName)
+                    .message("Workflow '" + workflowName + "' not found in configuration")
+                    .detail("availableWorkflows", fullConfig.workflows != null ? 
+                           new ArrayList<>(fullConfig.workflows.keySet()) : Collections.emptyList())
+                    .build()
+            );
+        }
+        
+        // Create subset config with only the target workflow
+        FlowConfig workflowConfig = createWorkflowSubset(fullConfig, workflowName);
+        
+        LOGGER.debug("Validating workflow '{}' with {} step(s)", 
+                    workflowName, workflowConfig.steps != null ? workflowConfig.steps.size() : 0);
+        
+        ValidationResult result = validationEngine.validate(workflowConfig);
+        
+        if (result.isValid()) {
+            LOGGER.info("Workflow '{}' validation passed successfully", workflowName);
+        } else {
+            LOGGER.warn("Workflow '{}' validation failed with {} error(s), {} warning(s)",
+                       workflowName, result.getErrors().size(), result.getWarnings().size());
+        }
+        
+        return result;
+    }
+    
+    /**
+     * Validates the configuration and throws an exception if validation fails.
+     * 
+     * <p>This is a convenience method for fail-fast scenarios where you want
+     * validation errors to prevent engine creation or execution.
+     * 
+     * <p>Usage example:
+     * <pre>
+     * try {
+     *     SimpleEngine engine = SimpleEngine.create("workflow.yaml");
+     *     engine.validateConfigurationOrThrow();
+     *     // Configuration is valid, safe to proceed
+     *     StepResult result = engine.execute("workflowName", context);
+     * } catch (ValidationException e) {
+     *     System.err.println("Configuration validation failed: " + e.getMessage());
+     *     // Handle validation errors
+     * }
+     * </pre>
+     * 
+     * @throws ValidationException if validation fails, containing detailed error information
+     */
+    public void validateConfigurationOrThrow() {
+        ValidationResult result = validateConfiguration();
+        
+        if (!result.isValid()) {
+            throw new ValidationException("FlowConfig validation failed", result);
+        }
+    }
+    
+    /**
+     * Gets information about the validation engine and registered validators.
+     * 
+     * @return list of validator information including names, priorities, and descriptions
+     */
+    public List<FlowConfigValidationEngine.ValidatorInfo> getValidationInfo() {
+        return validationEngine.getValidatorInfo();
+    }
+    
+    /**
+     * Clears the validation result cache if caching is enabled.
+     * 
+     * <p>Useful when the FlowConfig has been modified and you want to ensure
+     * fresh validation results on the next validation call.
+     */
+    public void clearValidationCache() {
+        validationEngine.clearCache();
+        LOGGER.debug("Validation cache cleared");
+    }
+    
+    /**
+     * Creates a subset FlowConfig containing only the specified workflow and its dependencies.
+     */
+    private FlowConfig createWorkflowSubset(FlowConfig fullConfig, String workflowName) {
+        FlowConfig subset = new FlowConfig();
+        
+        // Copy the target workflow
+        FlowConfig.WorkflowDef targetWorkflow = fullConfig.workflows.get(workflowName);
+        subset.workflows = Map.of(workflowName, targetWorkflow);
+        
+        // Find and copy all referenced steps
+        Set<String> referencedSteps = findReferencedSteps(targetWorkflow);
+        subset.steps = new HashMap<>();
+        
+        if (fullConfig.steps != null) {
+            for (String stepName : referencedSteps) {
+                if (fullConfig.steps.containsKey(stepName)) {
+                    subset.steps.put(stepName, fullConfig.steps.get(stepName));
+                }
+            }
+        }
+        
+        // Copy global settings and defaults
+        subset.settings = fullConfig.settings;
+        subset.defaults = fullConfig.defaults;
+        
+        return subset;
+    }
+    
+    /**
+     * Finds all steps referenced by a workflow (in edges and root).
+     */
+    private Set<String> findReferencedSteps(FlowConfig.WorkflowDef workflow) {
+        Set<String> referencedSteps = new HashSet<>();
+        
+        if (workflow.root != null) {
+            referencedSteps.add(workflow.root);
+        }
+        
+        if (workflow.edges != null) {
+            for (FlowConfig.EdgeDef edge : workflow.edges) {
+                if (edge.from != null && !isTerminal(edge.from)) {
+                    referencedSteps.add(edge.from);
+                }
+                if (edge.to != null && !isTerminal(edge.to)) {
+                    referencedSteps.add(edge.to);
+                }
+            }
+        }
+        
+        return referencedSteps;
+    }
+    
+    private boolean isTerminal(String stepName) {
+        return "SUCCESS".equals(stepName) || "FAILURE".equals(stepName);
     }
 
     // ======================================================================================
@@ -327,6 +708,7 @@ public class SimpleEngine {
     public static class EngineBuilder {
         private final List<String> yamlPaths = new ArrayList<>();
         private String[] scanPackages;
+        private FlowConfigValidationEngine customValidationEngine;
 
         /**
          * Adds YAML files containing workflows and step definitions.
@@ -342,6 +724,33 @@ public class SimpleEngine {
          */
         public EngineBuilder withPackages(String... allRequiredPackages) {
             this.scanPackages = allRequiredPackages;
+            return this;
+        }
+        
+        /**
+         * Sets a custom validation engine with specific validators.
+         */
+        public EngineBuilder withValidationEngine(FlowConfigValidationEngine validationEngine) {
+            this.customValidationEngine = validationEngine;
+            return this;
+        }
+        
+        /**
+         * Configures validation with custom validators.
+         * 
+         * <p>Usage example:
+         * <pre>
+         * EngineBuilder builder = SimpleEngine.builder()
+         *     .withCustomValidation(validationBuilder -> validationBuilder
+         *         .addValidator(new CycleDetectionValidator())
+         *         .addValidator(new EdgeOrderingValidator()) 
+         *         .addValidator(new BusinessRuleValidator())
+         *         .enableCaching(true));
+         * </pre>
+         */
+        public EngineBuilder withCustomValidation(java.util.function.Function<FlowConfigValidationEngine.Builder, FlowConfigValidationEngine.Builder> configurer) {
+            FlowConfigValidationEngine.Builder validationBuilder = FlowConfigValidationEngine.builder();
+            this.customValidationEngine = configurer.apply(validationBuilder).build();
             return this;
         }
 
@@ -367,7 +776,12 @@ public class SimpleEngine {
             }
 
             LOGGER.info("SimpleEngine built with {} YAML(s); packages={}", yamlPaths.size(), Arrays.toString(scanPackages));
-            return new SimpleEngine(mergedConfig, scanPackages);
+            
+            if (customValidationEngine != null) {
+                return new SimpleEngine(mergedConfig, customValidationEngine, scanPackages);
+            } else {
+                return new SimpleEngine(mergedConfig, scanPackages);
+            }
         }
 
         /**

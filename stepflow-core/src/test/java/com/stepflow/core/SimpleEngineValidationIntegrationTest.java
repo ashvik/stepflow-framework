@@ -164,16 +164,22 @@ public class SimpleEngineValidationIntegrationTest {
         FlowConfig config = new FlowConfig();
         config.steps = Map.of(
             "stepA", createStep("stepAImpl"),
-            "stepB", createStep("stepBImpl")
+            "stepB", createStep("stepBImpl"),
+            "stepC", createStep("stepCImpl")
         );
         
-        config.workflows = Map.of("problematicWorkflow", createWorkflowDef("stepA", Arrays.asList(
-            // Cycle
-            createEdge("stepA", "stepB", null),
-            createEdge("stepB", "stepA", null),
-            // Multiple unguarded edges from stepA
-            createEdge("stepA", "SUCCESS", null)
-        )));
+        // Create separate workflows with different issues to avoid Engine validation conflicts
+        config.workflows = Map.of(
+            "problematicWorkflow", createWorkflowDef("stepA", Arrays.asList(
+                // Simple cycle: A -> B -> A  
+                createEdge("stepA", "stepB", null),
+                createEdge("stepB", "stepA", null) // Creates cycle
+            )),
+            "anotherProblematicWorkflow", createWorkflowDef("stepC", Arrays.asList(
+                // This workflow will pass Engine validation but fail our custom validation
+                createEdge("stepC", "SUCCESS", null)
+            ))
+        );
         
         return config;
     }

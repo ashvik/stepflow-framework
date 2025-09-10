@@ -121,10 +121,10 @@ SimpleEngine engine = SimpleEngine
     .step("validate")
         .using("validateStep")
         .with("min_amount", 10.0)
-        .toIf("ValidOrder", "payment") // returns EdgeBuilder now
-            .onFailureSkip()
-            .endEdgeToStep()            // continue adding edges from the same step
-        .to("manual_review").onFailureStop().endEdge()
+        .route(r -> r
+            .when("ValidOrder", "payment")   // default onFailure=SKIP for route edges
+            .otherwise("manual_review")       // unguarded fallback (must be last)
+        )
     .step("payment")
         .using("paymentStep") 
         .with("gateway", "stripe")
@@ -140,10 +140,10 @@ You can also build and validate in one go:
 SimpleEngine engine = SimpleEngine
     .workflow("checkout")
     .step("enrich").using("enrichStep")
-        .toIf("VipCustomer", "premium")
-            .onFailureSkip()
-            .endEdgeToStep()
-        .to("standard").endEdge()
+        .route(r -> r
+            .when("VipCustomer", "premium")
+            .otherwise("standard")
+        )
     .step("standard").using("standardStep").toSuccess()
     .step("premium").using("premiumStep").toSuccess()
     .buildValidated(); // throws on invalid config

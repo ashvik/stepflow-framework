@@ -44,12 +44,11 @@ public class FluentApiShowcase {
             .step("process").using("processStep")
                 // Demonstrate setting values used by guards later
                 .with("status", "SUCCESS")
-                // FIRST match wins; ordering matters
-                .toIf("paymentSucceeded", "notify")
-                    .onFailureSkip()   // guard failed → skip this edge, evaluate next
-                    .endEdgeToStep()
-                // Fallback: if payment not successful, go to FAILURE terminal (default path must be last)
-                .toFailure()
+                // Compact routing: guarded edges with default SKIP, plus default fallback
+                .route(r -> r
+                    .when("paymentSucceeded", "notify")     // onFailure=SKIP by default
+                    .otherwise("FAILURE")                     // default path must be last
+                )
 
             .step("notify").using("notificationStep")
                 .with("channel", "email") // overrides settings if step reads config directly
@@ -58,10 +57,10 @@ public class FluentApiShowcase {
             // Optional: a small branch demonstrating edge RETRY using a guard
             .step("gate").using("processStep")
                 .with("status", "SUCCESS")
-                .toIf("paymentSucceeded", "unstableStep")
-                    .onFailureRetry(3, 50) // re-evaluate guard up to 3 times with delay
-                    .endEdgeToStep()
-                .toSuccess()
+                .route(r -> r
+                    .whenRetry("paymentSucceeded", "unstableStep", 3, 50)
+                    .otherwise("SUCCESS")
+                )
 
             // Engine-driven step retry (retry.guard)
             .step("unstableStep").using("unstable")

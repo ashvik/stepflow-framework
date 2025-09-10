@@ -979,9 +979,54 @@ public class SimpleEngine {
             return to(nextStepName).endEdge();
         }
 
+        /** Adds an unguarded edge to the next step and returns the workflow builder. */
+        public WorkflowBuilder thenSuccess() {
+            return to("SUCCESS").endEdge();
+        }
+
+        /** Adds an unguarded edge to the next step and returns the workflow builder. */
+        public WorkflowBuilder thenFailure() {
+            return to("FAILURE").endEdge();
+        }
+
         /** Begins a guarded edge to the next step and returns the edge builder for further configuration. */
         public EdgeBuilder toIf(String guardName, String nextStepName) {
             return to(nextStepName).guard(guardName);
+        }
+
+        // ------------------------------------------------------------
+        // Concise helpers to avoid EdgeBuilder for common cases
+        // These make toIf largely unnecessary for day-to-day usage.
+        // ------------------------------------------------------------
+
+        /** Adds a guarded edge with onFailure=SKIP (continue evaluating next edges), then returns WorkflowBuilder. */
+        public WorkflowBuilder when(String guardName, String to) {
+            return route(r -> r.when(guardName, to));
+        }
+
+        /** Adds a guarded edge with onFailure=STOP (terminate workflow), then returns WorkflowBuilder. */
+        public WorkflowBuilder whenStop(String guardName, String to) {
+            return route(r -> r.whenStop(guardName, to));
+        }
+
+        /** Adds a guarded edge with onFailure=CONTINUE (proceed to target), then returns WorkflowBuilder. */
+        public WorkflowBuilder whenContinue(String guardName, String to) {
+            return route(r -> r.whenContinue(guardName, to));
+        }
+
+        /** Adds a guarded edge with onFailure=ALTERNATIVE (redirect to alternative target), then returns WorkflowBuilder. */
+        public WorkflowBuilder whenAlternative(String guardName, String to, String alternativeTarget) {
+            return route(r -> r.whenAlternative(guardName, to, alternativeTarget));
+        }
+
+        /** Adds a guarded edge with onFailure=RETRY (re-evaluate guard), then returns WorkflowBuilder. */
+        public WorkflowBuilder whenRetry(String guardName, String to, int attempts, long delayMs) {
+            return route(r -> r.whenRetry(guardName, to, attempts, delayMs));
+        }
+
+        /** Adds an unguarded default edge and returns WorkflowBuilder. */
+        public WorkflowBuilder otherwise(String to) {
+            return route(r -> r.otherwise(to));
         }
 
         /** Begins configuration of an edge from this step to the given target. */
@@ -1020,6 +1065,30 @@ public class SimpleEngine {
                 workflowDefinition.edges.add(terminalEdge);
             }
 
+            return workflowBuilder;
+        }
+
+        /**
+         * Returns to the parent workflow builder without adding any terminal edge.
+         * Useful after configuration blocks like route(...).
+         */
+        public WorkflowBuilder endStep() {
+            return workflowBuilder;
+        }
+
+        /**
+         * Compact DSL for adding multiple outgoing edges from this step.
+         * Returns the parent WorkflowBuilder for concise chaining (like then).
+         * Example:
+         *   .route(r -> r
+         *       .when("VipCustomer", "premium")       // default onFailure=SKIP
+         *       .whenContinue("HasCoupon", "discount")
+         *       .otherwise("standard")                 // unguarded fallback (must be last)
+         *   )
+         */
+        public WorkflowBuilder route(java.util.function.Consumer<RouteBuilder> configurer) {
+            RouteBuilder rb = new RouteBuilder(this);
+            configurer.accept(rb);
             return workflowBuilder;
         }
 
@@ -1068,6 +1137,124 @@ public class SimpleEngine {
         }
     }
 
+    /**
+     * Compact builder to add multiple edges from a single step with minimal verbosity.
+     */
+    public static class RouteBuilder {
+        private final StepBuilder stepBuilder;
+        private final WorkflowBuilder workflowBuilder;
+        private final String stepName;
+        private final FlowConfig.WorkflowDef workflowDefinition;
+        private boolean closed;
+
+        RouteBuilder(StepBuilder stepBuilder) {
+            this.stepBuilder = stepBuilder;
+            this.workflowBuilder = stepBuilder.workflowBuilder;
+            this.stepName = stepBuilder.stepName;
+            FlowConfig wfConfig = workflowBuilder.getConfig();
+            String wfName = workflowBuilder.getWorkflowName();
+            this.workflowDefinition = wfConfig.workflows.computeIfAbsent(wfName, k -> {
+                FlowConfig.WorkflowDef wf = new FlowConfig.WorkflowDef();
+                wf.edges = new ArrayList<>();
+                return wf;
+            });
+            if (this.workflowDefinition.root == null) {
+                this.workflowDefinition.root = this.stepName;
+            }
+            this.closed = false;
+        }
+
+        private void assertOpen() {
+            if (closed) {
+                throw new IllegalStateException("RouteBuilder is closed after otherwise(); no further edges can be added.");
+            }
+        }
+
+        private FlowConfig.EdgeDef newEdge(String to) {
+            FlowConfig.EdgeDef e = new FlowConfig.EdgeDef();
+            e.from = stepName;
+            e.to = to;
+            this.workflowDefinition.edges.add(e);
+            return e;
+        }
+
+        private void setFailure(FlowConfig.EdgeDef e, String strategy, Integer attempts, Long delay, String alt) {
+            if (e.onFailure == null) e.onFailure = new FlowConfig.OnFailure();
+            e.onFailure.strategy = strategy;
+            e.onFailure.attempts = attempts;
+            e.onFailure.delay = delay;
+            e.onFailure.alternativeTarget = alt;
+        }
+
+        /** Adds a guarded edge; default onFailure=SKIP to continue evaluating next edges. */
+        public RouteBuilder when(String guardName, String to) {
+            assertOpen();
+            FlowConfig.EdgeDef e = newEdge(to);
+            e.guard = guardName;
+            setFailure(e, "SKIP", null, null, null);
+            return this;
+        }
+
+        /** Guarded edge with STOP onFailure (terminate workflow). */
+        public RouteBuilder whenStop(String guardName, String to) {
+            assertOpen();
+            FlowConfig.EdgeDef e = newEdge(to);
+            e.guard = guardName;
+            setFailure(e, "STOP", null, null, null);
+            return this;
+        }
+
+        /** Guarded edge with CONTINUE onFailure (proceed to target despite failure). */
+        public RouteBuilder whenContinue(String guardName, String to) {
+            assertOpen();
+            FlowConfig.EdgeDef e = newEdge(to);
+            e.guard = guardName;
+            setFailure(e, "CONTINUE", null, null, null);
+            return this;
+        }
+
+        /** Guarded edge with ALTERNATIVE onFailure (redirect to alternativeTarget). */
+        public RouteBuilder whenAlternative(String guardName, String to, String alternativeTarget) {
+            assertOpen();
+            FlowConfig.EdgeDef e = newEdge(to);
+            e.guard = guardName;
+            setFailure(e, "ALTERNATIVE", null, null, alternativeTarget);
+            return this;
+        }
+
+        /** Guarded edge with RETRY onFailure (re-evaluate guard). */
+        public RouteBuilder whenRetry(String guardName, String to, int attempts, long delayMs) {
+            assertOpen();
+            FlowConfig.EdgeDef e = newEdge(to);
+            e.guard = guardName;
+            setFailure(e, "RETRY", attempts, delayMs, null);
+            return this;
+        }
+
+        /** Unguarded default edge; must be the final edge in this route. */
+        public StepBuilder otherwise(String to) {
+            assertOpen();
+            newEdge(to); // no guard
+            closed = true;
+            return stepBuilder;
+        }
+
+        /** Unguarded default edge; must be the final edge in this route. */
+        public StepBuilder otherwiseSuccess() {
+            assertOpen();
+            newEdge("SUCCESS"); // no guard
+            closed = true;
+            return stepBuilder;
+        }
+
+        /** Unguarded default edge; must be the final edge in this route. */
+        public StepBuilder otherwiseFailure() {
+            assertOpen();
+            newEdge("FAILURE"); // no guard
+            closed = true;
+            return stepBuilder;
+        }
+    }
     /**
      * Fluent builder for configuring an individual workflow edge.
      */

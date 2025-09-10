@@ -822,6 +822,8 @@ public class SimpleEngine {
             this.scanPackages = null;
             this.config.steps = new HashMap<>();
             this.config.workflows = new HashMap<>();
+            this.config.settings = new HashMap<>();
+            this.config.defaults = new HashMap<>();
         }
 
         public WorkflowBuilder(String workflowName, String... scanPackages) {
@@ -829,10 +831,48 @@ public class SimpleEngine {
             this.scanPackages = scanPackages;
             this.config.steps = new HashMap<>();
             this.config.workflows = new HashMap<>();
+            this.config.settings = new HashMap<>();
+            this.config.defaults = new HashMap<>();
         }
 
         public StepBuilder step(String stepName) {
             return new StepBuilder(this, stepName);
+        }
+
+        /**
+         * Explicitly sets the workflow root step.
+         */
+        public WorkflowBuilder root(String stepName) {
+            FlowConfig.WorkflowDef workflowDefinition = config.workflows.computeIfAbsent(workflowName, k -> {
+                FlowConfig.WorkflowDef wf = new FlowConfig.WorkflowDef();
+                wf.edges = new ArrayList<>();
+                return wf;
+            });
+            workflowDefinition.root = stepName;
+            return this;
+        }
+
+        /** Adds or updates a top-level setting. */
+        public WorkflowBuilder setting(String key, Object value) {
+            if (config.settings == null) config.settings = new HashMap<>();
+            config.settings.put(key, value);
+            return this;
+        }
+
+        /** Adds defaults for a category (e.g., "step" or "guard"). */
+        public WorkflowBuilder defaults(String category, Map<String, Object> values) {
+            if (config.defaults == null) config.defaults = new HashMap<>();
+            Map<String, Object> target = config.defaults.computeIfAbsent(category, k -> new HashMap<>());
+            if (values != null) target.putAll(values);
+            return this;
+        }
+
+        /** Adds defaults for a specific step or guard by name. */
+        public WorkflowBuilder defaultsFor(String name, Map<String, Object> values) {
+            if (config.defaults == null) config.defaults = new HashMap<>();
+            Map<String, Object> target = config.defaults.computeIfAbsent(name, k -> new HashMap<>());
+            if (values != null) target.putAll(values);
+            return this;
         }
 
         public SimpleEngine build() {
@@ -841,6 +881,13 @@ public class SimpleEngine {
             } else {
                 return new SimpleEngine(config);
             }
+        }
+
+        /** Builds the engine and validates configuration immediately, throwing on failure. */
+        public SimpleEngine buildValidated() {
+            SimpleEngine eng = build();
+            eng.validateConfigurationOrThrow();
+            return eng;
         }
 
         FlowConfig getConfig() {
@@ -927,7 +974,18 @@ public class SimpleEngine {
             return retry(maxAttempts, delayMs, null);
         }
 
+        /** Adds an unguarded edge to the next step and returns the workflow builder. */
         public WorkflowBuilder then(String nextStepName) {
+            return to(nextStepName).endEdge();
+        }
+
+        /** Begins a guarded edge to the next step and returns the edge builder for further configuration. */
+        public EdgeBuilder toIf(String guardName, String nextStepName) {
+            return to(nextStepName).guard(guardName);
+        }
+
+        /** Begins configuration of an edge from this step to the given target. */
+        public EdgeBuilder to(String nextStepName) {
             FlowConfig workflowConfig = workflowBuilder.getConfig();
             String workflowName = workflowBuilder.getWorkflowName();
 
@@ -946,8 +1004,7 @@ public class SimpleEngine {
             executionEdge.from = stepName;
             executionEdge.to = nextStepName;
             workflowDefinition.edges.add(executionEdge);
-
-            return workflowBuilder;
+            return new EdgeBuilder(workflowBuilder, executionEdge);
         }
 
         public WorkflowBuilder end() {
@@ -966,6 +1023,38 @@ public class SimpleEngine {
             return workflowBuilder;
         }
 
+        /** Marks this step as the workflow root explicitly. */
+        public StepBuilder root() {
+            FlowConfig workflowConfig = workflowBuilder.getConfig();
+            String workflowName = workflowBuilder.getWorkflowName();
+            FlowConfig.WorkflowDef workflowDefinition = workflowConfig.workflows.computeIfAbsent(workflowName,
+                workflowKey -> {
+                    FlowConfig.WorkflowDef newWorkflow = new FlowConfig.WorkflowDef();
+                    newWorkflow.edges = new ArrayList<>();
+                    return newWorkflow;
+                });
+            workflowDefinition.root = stepName;
+            return this;
+        }
+
+        /** Convenience: add unguarded terminal transition to SUCCESS. */
+        public WorkflowBuilder toSuccess() { return to("SUCCESS").endEdge(); }
+
+        /** Convenience: add unguarded terminal transition to FAILURE. */
+        public WorkflowBuilder toFailure() { return to("FAILURE").endEdge(); }
+
+        /** Convenience: add guarded terminal transition to SUCCESS. */
+        public WorkflowBuilder toSuccessIf(String guardName) { return to("SUCCESS").guard(guardName).endEdge(); }
+
+        /** Convenience: add guarded terminal transition to FAILURE. */
+        public WorkflowBuilder toFailureIf(String guardName) { return to("FAILURE").guard(guardName).endEdge(); }
+
+        /** Adds an unguarded edge and returns a StepBuilder for the target step to continue chaining. */
+        public StepBuilder thenStep(String nextStepName) {
+            then(nextStepName);
+            return new StepBuilder(workflowBuilder, nextStepName);
+        }
+
         private FlowConfig.StepDef getOrCreateStepDef() {
             FlowConfig workflowConfig = workflowBuilder.getConfig();
             FlowConfig.StepDef def = workflowConfig.steps.get(stepName);
@@ -976,6 +1065,89 @@ public class SimpleEngine {
                 workflowConfig.steps.put(stepName, def);
             }
             return def;
+        }
+    }
+
+    /**
+     * Fluent builder for configuring an individual workflow edge.
+     */
+    public static class EdgeBuilder {
+        private final WorkflowBuilder workflowBuilder;
+        private final FlowConfig.EdgeDef edge;
+
+        EdgeBuilder(WorkflowBuilder workflowBuilder, FlowConfig.EdgeDef edge) {
+            this.workflowBuilder = workflowBuilder;
+            this.edge = edge;
+        }
+
+        /** Sets an edge-level guard. */
+        public EdgeBuilder guard(String guardName) {
+            this.edge.guard = guardName;
+            return this;
+        }
+
+        /** onFailure: STOP (default). */
+        public EdgeBuilder onFailureStop() {
+            ensureOnFailure();
+            this.edge.onFailure.strategy = "STOP";
+            this.edge.onFailure.alternativeTarget = null;
+            this.edge.onFailure.attempts = null;
+            this.edge.onFailure.delay = null;
+            return this;
+        }
+
+        /** onFailure: SKIP. */
+        public EdgeBuilder onFailureSkip() {
+            ensureOnFailure();
+            this.edge.onFailure.strategy = "SKIP";
+            this.edge.onFailure.alternativeTarget = null;
+            this.edge.onFailure.attempts = null;
+            this.edge.onFailure.delay = null;
+            return this;
+        }
+
+        /** onFailure: CONTINUE. */
+        public EdgeBuilder onFailureContinue() {
+            ensureOnFailure();
+            this.edge.onFailure.strategy = "CONTINUE";
+            this.edge.onFailure.alternativeTarget = null;
+            this.edge.onFailure.attempts = null;
+            this.edge.onFailure.delay = null;
+            return this;
+        }
+
+        /** onFailure: ALTERNATIVE -> target. */
+        public EdgeBuilder onFailureAlternative(String alternativeTarget) {
+            ensureOnFailure();
+            this.edge.onFailure.strategy = "ALTERNATIVE";
+            this.edge.onFailure.alternativeTarget = alternativeTarget;
+            this.edge.onFailure.attempts = null;
+            this.edge.onFailure.delay = null;
+            return this;
+        }
+
+        /** onFailure: RETRY attempts/delay. */
+        public EdgeBuilder onFailureRetry(int attempts, long delayMs) {
+            ensureOnFailure();
+            this.edge.onFailure.strategy = "RETRY";
+            this.edge.onFailure.attempts = attempts;
+            this.edge.onFailure.delay = delayMs;
+            this.edge.onFailure.alternativeTarget = null;
+            return this;
+        }
+
+        /** Finalizes the edge configuration and returns the parent workflow builder. */
+        public WorkflowBuilder endEdge() {
+            return workflowBuilder;
+        }
+
+        /** Finalizes the edge and returns a StepBuilder for the same source step to continue chaining. */
+        public StepBuilder endEdgeToStep() {
+            return new StepBuilder(workflowBuilder, edge.from);
+        }
+
+        private void ensureOnFailure() {
+            if (this.edge.onFailure == null) this.edge.onFailure = new FlowConfig.OnFailure();
         }
     }
 

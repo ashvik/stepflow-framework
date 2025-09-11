@@ -1,6 +1,8 @@
 package com.stepflow.config;
 
 import java.util.*;
+import org.yaml.snakeyaml.DumperOptions;
+import org.yaml.snakeyaml.Yaml;
 
 /**
  * Configuration class that holds workflow definitions.
@@ -54,123 +56,114 @@ public class FlowConfig {
     }
     
     public String toFormattedYaml() {
-        StringBuilder yaml = new StringBuilder();
+        // Build a YAML-friendly tree using linked maps/lists to preserve order
+        Map<String, Object> root = new LinkedHashMap<>();
 
-        // Settings
         if (settings != null && !settings.isEmpty()) {
-            yaml.append("settings:\n");
-            appendMap(yaml, settings, 2);
-            yaml.append('\n');
+            root.put("settings", new LinkedHashMap<>(settings));
         }
 
-        // Defaults
         if (defaults != null && !defaults.isEmpty()) {
-            yaml.append("defaults:\n");
-            for (Map.Entry<String, Map<String, Object>> def : defaults.entrySet()) {
-                yaml.append("  ").append(def.getKey()).append(":\n");
-                appendMap(yaml, def.getValue(), 4);
+            // Ensure nested maps are linked for stable output
+            Map<String, Object> defs = new LinkedHashMap<>();
+            for (Map.Entry<String, Map<String, Object>> e : defaults.entrySet()) {
+                defs.put(e.getKey(), new LinkedHashMap<>(e.getValue()));
             }
-            yaml.append('\n');
+            root.put("defaults", defs);
         }
 
-        // Steps
         if (steps != null && !steps.isEmpty()) {
-            yaml.append("steps:\n");
-            for (Map.Entry<String, StepDef> entry : steps.entrySet()) {
-                StepDef sd = entry.getValue();
-                yaml.append("  ").append(entry.getKey()).append(":\n");
-                if (sd.type != null) yaml.append("    type: \"").append(sd.type).append("\"\n");
+            Map<String, Object> stepsNode = new LinkedHashMap<>();
+            // Use natural ordering for determinism in output
+            List<String> names = new ArrayList<>(steps.keySet());
+            Collections.sort(names);
+            for (String name : names) {
+                StepDef sd = steps.get(name);
+                Map<String, Object> stepMap = new LinkedHashMap<>();
+                if (sd.type != null && !sd.type.isEmpty()) {
+                    stepMap.put("type", sd.type);
+                }
                 if (sd.config != null && !sd.config.isEmpty()) {
-                    yaml.append("    config:\n");
-                    appendMap(yaml, sd.config, 6);
+                    stepMap.put("config", new LinkedHashMap<>(sd.config));
                 }
                 if (sd.guards != null && !sd.guards.isEmpty()) {
-                    yaml.append("    guards:\n");
-                    for (String g : sd.guards) {
-                        yaml.append("      - \"").append(g).append("\"\n");
-                    }
+                    stepMap.put("guards", new ArrayList<>(sd.guards));
                 }
                 if (sd.retry != null) {
-                    yaml.append("    retry:\n");
-                    yaml.append("      maxAttempts: ").append(sd.retry.maxAttempts).append('\n');
-                    yaml.append("      delay: ").append(sd.retry.delay).append('\n');
+                    Map<String, Object> retry = new LinkedHashMap<>();
+                    retry.put("maxAttempts", sd.retry.maxAttempts);
+                    retry.put("delay", sd.retry.delay);
                     if (sd.retry.guard != null && !sd.retry.guard.isEmpty()) {
-                        yaml.append("      guard: \"").append(sd.retry.guard).append("\"\n");
+                        retry.put("guard", sd.retry.guard);
                     }
+                    stepMap.put("retry", retry);
                 }
+                stepsNode.put(name, stepMap);
             }
-            yaml.append('\n');
+            root.put("steps", stepsNode);
         }
 
-        // Workflows
         if (workflows != null && !workflows.isEmpty()) {
-            yaml.append("workflows:\n");
-            for (Map.Entry<String, WorkflowDef> entry : workflows.entrySet()) {
-                WorkflowDef wf = entry.getValue();
-                yaml.append("  ").append(entry.getKey()).append(":\n");
-                if (wf.root != null) yaml.append("    root: \"").append(wf.root).append("\"\n");
+            Map<String, Object> wfNode = new LinkedHashMap<>();
+            List<String> wfNames = new ArrayList<>(workflows.keySet());
+            Collections.sort(wfNames);
+            for (String wfName : wfNames) {
+                WorkflowDef wf = workflows.get(wfName);
+                Map<String, Object> wfMap = new LinkedHashMap<>();
+                if (wf.root != null && !wf.root.isEmpty()) {
+                    wfMap.put("root", wf.root);
+                }
                 if (wf.edges != null && !wf.edges.isEmpty()) {
-                    yaml.append("    edges:\n");
-                    for (EdgeDef edge : wf.edges) {
-                        yaml.append("      - from: \"").append(edge.from).append("\"\n");
-                        yaml.append("        to: \"").append(edge.to).append("\"\n");
-                        if (edge.guard != null && !edge.guard.isEmpty()) {
-                            yaml.append("        guard: \"").append(edge.guard).append("\"\n");
+                    List<Map<String, Object>> edgesList = new ArrayList<>();
+                    for (EdgeDef e : wf.edges) {
+                        Map<String, Object> em = new LinkedHashMap<>();
+                        em.put("from", e.from);
+                        em.put("to", e.to);
+                        if (e.guard != null && !e.guard.isEmpty()) {
+                            em.put("guard", e.guard);
                         }
-                        if (edge.condition != null && !edge.condition.isEmpty()) {
-                            yaml.append("        condition: \"").append(edge.condition).append("\"\n");
+                        if (e.condition != null && !e.condition.isEmpty()) {
+                            em.put("condition", e.condition);
                         }
-                        if (edge.kind != null && !edge.kind.isEmpty() && !"normal".equals(edge.kind)) {
-                            yaml.append("        kind: \"").append(edge.kind).append("\"\n");
+                        if (e.kind != null && !e.kind.isEmpty() && !"normal".equals(e.kind)) {
+                            em.put("kind", e.kind);
                         }
-                        if (edge.onFailure != null) {
-                            yaml.append("        onFailure:\n");
-                            if (edge.onFailure.strategy != null && !edge.onFailure.strategy.isEmpty()) {
-                                yaml.append("          strategy: \"").append(edge.onFailure.strategy).append("\"\n");
+                        if (e.onFailure != null) {
+                            Map<String, Object> of = new LinkedHashMap<>();
+                            if (e.onFailure.strategy != null && !e.onFailure.strategy.isEmpty()) {
+                                of.put("strategy", e.onFailure.strategy);
                             }
-                            if (edge.onFailure.alternativeTarget != null && !edge.onFailure.alternativeTarget.isEmpty()) {
-                                yaml.append("          alternativeTarget: \"").append(edge.onFailure.alternativeTarget).append("\"\n");
+                            if (e.onFailure.alternativeTarget != null && !e.onFailure.alternativeTarget.isEmpty()) {
+                                of.put("alternativeTarget", e.onFailure.alternativeTarget);
                             }
-                            if (edge.onFailure.attempts != null) {
-                                yaml.append("          attempts: ").append(edge.onFailure.attempts).append('\n');
+                            if (e.onFailure.attempts != null) {
+                                of.put("attempts", e.onFailure.attempts);
                             }
-                            if (edge.onFailure.delay != null) {
-                                yaml.append("          delay: ").append(edge.onFailure.delay).append('\n');
+                            if (e.onFailure.delay != null) {
+                                of.put("delay", e.onFailure.delay);
+                            }
+                            if (!of.isEmpty()) {
+                                em.put("onFailure", of);
                             }
                         }
+                        edgesList.add(em);
                     }
+                    wfMap.put("edges", edgesList);
                 }
+                wfNode.put(wfName, wfMap);
             }
+            root.put("workflows", wfNode);
         }
 
-        return yaml.toString();
-    }
+        DumperOptions options = new DumperOptions();
+        options.setDefaultFlowStyle(DumperOptions.FlowStyle.BLOCK);
+        options.setPrettyFlow(true);
+        options.setIndent(2);
+        // indicatorIndent must be smaller than indent per SnakeYAML contract
+        options.setIndicatorIndent(1);
+        options.setLineBreak(DumperOptions.LineBreak.UNIX);
 
-    private void appendMap(StringBuilder yaml, Map<String, Object> map, int indent) {
-        if (map == null || map.isEmpty()) return;
-        String pad = " ".repeat(indent);
-        for (Map.Entry<String, Object> e : map.entrySet()) {
-            Object v = e.getValue();
-            if (v instanceof Map) {
-                yaml.append(pad).append(e.getKey()).append(":\n");
-                //noinspection unchecked
-                appendMap(yaml, (Map<String, Object>) v, indent + 2);
-            } else if (v instanceof List) {
-                yaml.append(pad).append(e.getKey()).append(":\n");
-                for (Object item : (List<?>) v) {
-                    yaml.append(pad).append("- ").append(stringify(item)).append('\n');
-                }
-            } else {
-                yaml.append(pad).append(e.getKey()).append(": ").append(stringify(v)).append('\n');
-            }
-        }
-    }
-
-    private String stringify(Object v) {
-        if (v == null) return "null";
-        if (v instanceof Number || v instanceof Boolean) return v.toString();
-        String s = String.valueOf(v);
-        if (s.matches("[A-Za-z0-9_.-]+")) return s;
-        return "\"" + s.replace("\"", "\\\"") + "\"";
+        Yaml yaml = new Yaml(options);
+        return yaml.dump(root);
     }
 }

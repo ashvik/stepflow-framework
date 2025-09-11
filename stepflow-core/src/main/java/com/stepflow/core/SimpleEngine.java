@@ -990,6 +990,7 @@ public class SimpleEngine {
         }
 
         /** Begins a guarded edge to the next step and returns the edge builder for further configuration. */
+        @Deprecated
         public EdgeBuilder toIf(String guardName, String nextStepName) {
             return to(nextStepName).guard(guardName);
         }

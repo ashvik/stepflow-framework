@@ -952,9 +952,9 @@ public class SimpleEngine {
         }
 
         /**
-         * Configures engine-driven retry. If retryGuardName is provided, the engine will retry
+         * Configures engine-driven retry with fixed delay. If retryGuardName is provided, the engine will retry
          * failed step executions up to maxAttempts with delayMs between attempts when the guard passes.
-         * If retryGuardName is null, the engine executes the step once; the step may implement its own retry.
+         * If retryGuardName is null, the engine will retry unconditionally up to maxAttempts with fixed delay.
          */
         public StepBuilder retry(int maxAttempts, long delayMs, String retryGuardName) {
             FlowConfig.StepDef stepDefinition = getOrCreateStepDef();
@@ -967,11 +967,90 @@ public class SimpleEngine {
         }
 
         /**
-         * Configures retry parameters for steps that handle retry internally (no engine guard).
-         * The engine will still execute the step once; the step is expected to use these values.
+         * Configures engine-driven retry without a guard (unconditional), using fixed delay.
          */
         public StepBuilder retry(int maxAttempts, long delayMs) {
             return retry(maxAttempts, delayMs, null);
+        }
+
+        /**
+         * Configures engine-driven retry with exponential backoff.
+         * If retryGuardName is provided, guard controls whether to continue retrying between attempts;
+         * if null, retries are unconditional.
+         */
+        public StepBuilder retryExponential(int maxAttempts, long baseDelayMs, Double multiplier, Long maxDelayMs, String retryGuardName) {
+            FlowConfig.StepDef stepDefinition = getOrCreateStepDef();
+            FlowConfig.RetryConfig retry = new FlowConfig.RetryConfig();
+            retry.maxAttempts = maxAttempts;
+            retry.delay = baseDelayMs;
+            retry.guard = retryGuardName;
+            retry.backoff = "EXPONENTIAL";
+            retry.multiplier = (multiplier != null ? multiplier : 2.0);
+            retry.maxDelay = maxDelayMs;
+            stepDefinition.retry = retry;
+            return this;
+        }
+
+        /**
+         * Alternative API that takes number of retries (excluding the initial attempt).
+         * For example, retries=2 means up to 3 total attempts.
+         */
+        public StepBuilder retries(int retries, long delayMs) {
+            FlowConfig.StepDef stepDefinition = getOrCreateStepDef();
+            FlowConfig.RetryConfig retry = new FlowConfig.RetryConfig();
+            retry.retries = Math.max(0, retries);
+            retry.delay = delayMs;
+            retry.guard = null; // unconditional by default
+            stepDefinition.retry = retry;
+            return this;
+        }
+
+        public StepBuilder retries(int retries, long delayMs, String retryGuardName) {
+            FlowConfig.StepDef stepDefinition = getOrCreateStepDef();
+            FlowConfig.RetryConfig retry = new FlowConfig.RetryConfig();
+            retry.retries = Math.max(0, retries);
+            retry.delay = delayMs;
+            retry.guard = retryGuardName;
+            stepDefinition.retry = retry;
+            return this;
+        }
+
+        public StepBuilder retriesExponential(int retries, long baseDelayMs) {
+            return retriesExponential(retries, baseDelayMs, 2.0, null, null);
+        }
+
+        public StepBuilder retriesExponential(int retries, long baseDelayMs, double multiplier) {
+            return retriesExponential(retries, baseDelayMs, multiplier, null, null);
+        }
+
+        public StepBuilder retriesExponential(int retries, long baseDelayMs, double multiplier, Long maxDelayMs) {
+            return retriesExponential(retries, baseDelayMs, multiplier, maxDelayMs, null);
+        }
+
+        public StepBuilder retriesExponential(int retries, long baseDelayMs, Double multiplier, Long maxDelayMs, String retryGuardName) {
+            FlowConfig.StepDef stepDefinition = getOrCreateStepDef();
+            FlowConfig.RetryConfig retry = new FlowConfig.RetryConfig();
+            retry.retries = Math.max(0, retries);
+            retry.delay = baseDelayMs;
+            retry.guard = retryGuardName;
+            retry.backoff = "EXPONENTIAL";
+            retry.multiplier = (multiplier != null ? multiplier : 2.0);
+            retry.maxDelay = maxDelayMs;
+            stepDefinition.retry = retry;
+            return this;
+        }
+
+        /** Convenience overloads for exponential backoff without a guard. */
+        public StepBuilder retryExponential(int maxAttempts, long baseDelayMs) {
+            return retryExponential(maxAttempts, baseDelayMs, 2.0, null, null);
+        }
+
+        public StepBuilder retryExponential(int maxAttempts, long baseDelayMs, double multiplier) {
+            return retryExponential(maxAttempts, baseDelayMs, multiplier, null, null);
+        }
+
+        public StepBuilder retryExponential(int maxAttempts, long baseDelayMs, double multiplier, Long maxDelayMs) {
+            return retryExponential(maxAttempts, baseDelayMs, multiplier, maxDelayMs, null);
         }
 
         /** Adds an unguarded edge to the next step and returns the workflow builder. */

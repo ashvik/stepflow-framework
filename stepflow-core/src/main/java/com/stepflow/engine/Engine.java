@@ -662,17 +662,24 @@ public class Engine {
     }
 
     /**
-     * Executes a step once or with engine-driven retry (when retry.guard is present).
+     * Executes a step once or with engine-driven retry.
+     *
+     * Behavior:
+     * - No retry config: execute once
+     * - Retry with guard: execute, if failed and guard passes → retry up to maxAttempts with delay
+     * - Retry without guard: execute, if failed → always retry up to maxAttempts with delay
      */
     private StepResult executeWithOptionalRetry(Step step, FlowConfig.RetryConfig retry, ExecutionContext context) {
-        if (retry == null || retry.guard == null || retry.guard.isEmpty()) {
+        if (retry == null) {
             StepResult result = step.execute(context);
             return result != null ? result : StepResult.failure("Step returned null result");
         }
 
         int attempts = 0;
-        int max = Math.max(1, retry.maxAttempts);
+        int max = computeMaxAttempts(retry);
+        boolean hasGuard = retry.guard != null && !retry.guard.isEmpty();
         StepResult lastResult = null;
+
         while (attempts < max) {
             StepResult r = step.execute(context);
             if (r != null && r.status == StepResult.Status.SUCCESS) {
@@ -681,15 +688,19 @@ public class Engine {
                 }
                 return r;
             }
+
             lastResult = (r != null) ? r : StepResult.failure("Step returned null result");
             attempts++;
             if (attempts >= max) break;
 
-            if (!evaluateSingleGuard(retry.guard, context)) {
-                LOGGER.debug("Retry guard '{}' blocked further attempts at attempt {}", retry.guard, attempts);
-                break;
+            if (hasGuard) {
+                if (!evaluateSingleGuard(retry.guard, context)) {
+                    LOGGER.debug("Retry guard '{}' blocked further attempts at attempt {}", retry.guard, attempts);
+                    break;
+                }
             }
-            long delayMs = Math.max(0L, retry.delay);
+
+            long delayMs = computeRetryDelay(retry, attempts); // attempts is 1-based for next retry
             if (delayMs > 0) {
                 try {
                     LOGGER.debug("Retrying in {} ms (attempt {}/{})", delayMs, attempts + 1, max);
@@ -699,6 +710,32 @@ public class Engine {
         }
         LOGGER.warn("Step failed after {} attempt(s)", attempts);
         return lastResult != null ? lastResult : StepResult.failure("Step failed after retries");
+    }
+
+    /** Determines the total number of executions allowed based on retry config. */
+    private int computeMaxAttempts(FlowConfig.RetryConfig retry) {
+        if (retry == null) return 1;
+        if (retry.retries != null && retry.retries >= 0) {
+            // retries means additional attempts after the initial
+            return Math.max(1, retry.retries + 1);
+        }
+        return Math.max(1, retry.maxAttempts);
+    }
+
+    /** Computes delay for the next retry attempt (attemptIndex is 1-based for the next try). */
+    private long computeRetryDelay(FlowConfig.RetryConfig retry, int attemptIndex) {
+        long base = Math.max(0L, retry.delay);
+        String strategy = retry.backoff != null ? retry.backoff.trim().toUpperCase() : null;
+        if ("EXPONENTIAL".equals(strategy)) {
+            double multiplier = (retry.multiplier != null && retry.multiplier > 0.0) ? retry.multiplier : 2.0;
+            double factor = Math.pow(multiplier, Math.max(0, attemptIndex - 1));
+            long computed = (long) Math.min((double) Long.MAX_VALUE, Math.round(base * factor));
+            if (retry.maxDelay != null) {
+                computed = Math.min(computed, Math.max(0L, retry.maxDelay));
+            }
+            return computed;
+        }
+        return base;
     }
     
     /**
@@ -1275,27 +1312,27 @@ public class Engine {
             if (!isTerminal(e.to)) orderedSteps.add(e.to);
         }
 
-        LOGGER.info("\n🧩 Steps (with type, config, step-guards, retry): ");
-        for (String stepName : orderedSteps) {
-            FlowConfig.StepDef sd = config.steps.get(stepName);
-            String type = sd != null ? sd.type : "<unresolved>";
-            Map<String, Object> effCfg = sd != null ? buildEffectiveConfig(stepName, sd.config, false) : Collections.emptyMap();
-            LOGGER.info("- step: {}", stepName);
-            LOGGER.info("  type: {}", type);
-            LOGGER.info("  config: {}", (effCfg == null ? "{}" : effCfg));
-            if (sd == null) {
+            LOGGER.info("\n🧩 Steps (with type, config, step-guards, retry): ");
+            for (String stepName : orderedSteps) {
+                FlowConfig.StepDef sd = config.steps.get(stepName);
+                String type = sd != null ? sd.type : "<unresolved>";
+                Map<String, Object> effCfg = sd != null ? buildEffectiveConfig(stepName, sd.config, false) : Collections.emptyMap();
+                LOGGER.info("- step: {}", stepName);
+                LOGGER.info("  type: {}", type);
+                LOGGER.info("  config: {}", (effCfg == null ? "{}" : effCfg));
+                if (sd == null) {
                 LOGGER.warn("  ⚠ step '{}' is referenced but not defined.", stepName);
             } else if (sd.type == null || sd.type.isEmpty() || componentScanner.getStepClass(sd.type) == null) {
                 LOGGER.warn("  ⚠ step '{}' implementation unresolved for type '{}'.", stepName, sd.type);
             }
             // Step-level guards
-            List<String> stepGuards = (sd != null && sd.guards != null) ? sd.guards : Collections.emptyList();
-            if (!stepGuards.isEmpty()) {
-                LOGGER.info("  step-guards:");
-                for (String g : stepGuards) {
-                    GuardInfo gi = getGuardInfo(g);
-                    LOGGER.info("    - name: {}, type: {}, config: {}", g,
-                            (gi.clazz != null ? gi.clazz.getSimpleName() : "<unresolved>"),
+                List<String> stepGuards = (sd != null && sd.guards != null) ? sd.guards : Collections.emptyList();
+                if (!stepGuards.isEmpty()) {
+                    LOGGER.info("  step-guards:");
+                    for (String g : stepGuards) {
+                        GuardInfo gi = getGuardInfo(g);
+                        LOGGER.info("    - name: {}, type: {}, config: {}", g,
+                                (gi.clazz != null ? gi.clazz.getSimpleName() : "<unresolved>"),
                             (gi.effectiveConfig == null ? "{}" : gi.effectiveConfig));
                     if (gi.clazz == null) {
                         LOGGER.warn("      ⚠ guard '{}' implementation unresolved.", g);
@@ -1315,6 +1352,28 @@ public class Engine {
                     }
                 } else {
                     LOGGER.info("    guard: <none> (step may handle retry internally)");
+                }
+            }
+            // Retry info
+            if (sd != null && sd.retry != null) {
+                LOGGER.info("  retry:");
+                LOGGER.info("    maxAttempts: {}", sd.retry.maxAttempts);
+                LOGGER.info("    delay: {}", sd.retry.delay);
+                if (sd.retry.guard != null && !sd.retry.guard.isEmpty()) {
+                    GuardInfo gi = getGuardInfo(sd.retry.guard);
+                    LOGGER.info("    guard: {} (type: {})", sd.retry.guard, (gi.clazz != null ? gi.clazz.getSimpleName() : "<unresolved>"));
+                    if (gi.clazz == null) {
+                        LOGGER.warn("      ⚠ retry guard '{}' implementation unresolved.", sd.retry.guard);
+                    }
+                }
+                if (sd.retry.backoff != null && !sd.retry.backoff.isEmpty()) {
+                    LOGGER.info("    backoff: {}", sd.retry.backoff);
+                }
+                if (sd.retry.multiplier != null) {
+                    LOGGER.info("    multiplier: {}", sd.retry.multiplier);
+                }
+                if (sd.retry.maxDelay != null) {
+                    LOGGER.info("    maxDelay: {}", sd.retry.maxDelay);
                 }
             }
         }

@@ -39,6 +39,12 @@ public class FlowConfig {
         public int maxAttempts = 3;
         public long delay = 1000;
         public String guard;
+        // Optional exponential backoff support
+        public String backoff;        // e.g., "EXPONENTIAL"; default null = fixed delay
+        public Double multiplier;     // e.g., 2.0; used when backoff=EXPONENTIAL
+        public Long maxDelay;         // cap for computed backoff delay
+        // Optional: number of retries (alternative to maxAttempts); if provided, engine treats maxAttempts = retries + 1
+        public Integer retries;
     }
 
     /**
@@ -95,6 +101,15 @@ public class FlowConfig {
                     retry.put("delay", sd.retry.delay);
                     if (sd.retry.guard != null && !sd.retry.guard.isEmpty()) {
                         retry.put("guard", sd.retry.guard);
+                    }
+                    if (sd.retry.backoff != null && !sd.retry.backoff.isEmpty()) {
+                        retry.put("backoff", sd.retry.backoff);
+                    }
+                    if (sd.retry.multiplier != null) {
+                        retry.put("multiplier", sd.retry.multiplier);
+                    }
+                    if (sd.retry.maxDelay != null) {
+                        retry.put("maxDelay", sd.retry.maxDelay);
                     }
                     stepMap.put("retry", retry);
                 }

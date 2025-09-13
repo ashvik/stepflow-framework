@@ -6,7 +6,6 @@ import com.stepflow.execution.*;
 import com.stepflow.resource.YamlResourceLoader;
 import com.stepflow.component.DependencyResolver;
 import com.stepflow.validation.*;
-import com.stepflow.validation.validators.*;
 
 import java.util.*;
 import org.yaml.snakeyaml.Yaml;
@@ -329,11 +328,77 @@ public class SimpleEngine {
     // ======================================================================================
 
     /**
-     * Executes a workflow with the given context.
-     *
-     * @param workflowName the name of the workflow to execute
-     * @param context the execution context containing input data
-     * @return the step result after workflow execution
+     * Executes a specified workflow using the provided execution context.
+     * 
+     * <p>This is the primary execution method for running workflows with full control
+     * over the execution context. The context serves as both input data container and
+     * result collector, accumulating state as the workflow progresses through steps.
+     * 
+     * <p><strong>Execution Flow:</strong>
+     * <ol>
+     *   <li>Validates workflow exists and is properly configured</li>
+     *   <li>Starts execution from the workflow's root step</li>
+     *   <li>For each step: evaluates guards, executes step logic, processes results</li>
+     *   <li>Follows edges based on guard conditions and step outcomes</li>
+     *   <li>Continues until reaching SUCCESS, FAILURE, or terminal condition</li>
+     *   <li>Returns final StepResult with accumulated context</li>
+     * </ol>
+     * 
+     * <p><strong>Basic Usage Examples:</strong>
+     * <pre>
+     * // Simple workflow execution
+     * ExecutionContext ctx = new ExecutionContext();
+     * ctx.put("user.id", "user123");
+     * ctx.put("order.amount", 99.99);
+     * 
+     * StepResult result = engine.execute("orderProcessing", ctx);
+     * 
+     * if (result.isSuccess()) {
+     *     // Access results from context
+     *     String orderId = ctx.getString("order.id");
+     *     String status = ctx.getString("processing.status");
+     *     System.out.println("Order " + orderId + " processed with status: " + status);
+     * } else {
+     *     System.err.println("Workflow failed: " + result.getMessage());
+     * }
+     * </pre>
+     * 
+     * <p><strong>Complex Data Flow Example:</strong>
+     * <pre>
+     * // Prepare comprehensive input context
+     * ExecutionContext ctx = new ExecutionContext();
+     * ctx.put("customer.id", "CUST-789");
+     * ctx.put("customer.tier", "PREMIUM");
+     * ctx.put("order.items", Arrays.asList("item1", "item2", "item3"));
+     * ctx.put("payment.method", "CREDIT_CARD");
+     * ctx.put("shipping.address", shippingAddress);
+     * 
+     * // Execute workflow
+     * StepResult result = engine.execute("premiumOrderFlow", ctx);
+     * 
+     * if (result.isSuccess()) {
+     *     // Extract comprehensive results
+     *     String transactionId = ctx.getString("payment.transaction_id");
+     *     Double totalAmount = ctx.getDouble("order.total_amount");
+     *     String shipmentId = ctx.getString("shipping.tracking_id");
+     *     List&lt;String&gt; appliedDiscounts = ctx.getList("order.discounts", String.class);
+     *     
+     *     System.out.println("Premium order processed successfully:");
+     *     System.out.println("Transaction: " + transactionId);
+     *     System.out.println("Total: $" + totalAmount);
+     *     System.out.println("Shipment: " + shipmentId);
+     *     System.out.println("Discounts: " + appliedDiscounts);
+     * }
+     * </pre>
+     * 
+     * @param workflowName the name of the workflow to execute. Must exist in the FlowConfig.
+     * @param context the execution context containing input data and collecting output data.
+     *               Modified in-place during execution to accumulate workflow state.
+     * @return StepResult indicating the final outcome of workflow execution
+     * @throws IllegalArgumentException if workflowName is null, empty, or doesn't exist
+     * 
+     * @see #execute(String, Map) for map-based input alternative
+     * @see #validateConfiguration() for pre-execution validation
      */
     public StepResult execute(String workflowName, ExecutionContext context) {
         LOGGER.debug("Executing workflow '{}' with context keys {}", workflowName, context.keySet());
@@ -341,11 +406,52 @@ public class SimpleEngine {
     }
 
     /**
-     * Executes a workflow with input data as a map.
-     *
-     * @param workflowName the name of the workflow to execute
-     * @param inputData the input data as key-value pairs
-     * @return the step result after workflow execution
+     * Executes a specified workflow using input data provided as a map.
+     * 
+     * <p>This is a convenience method that creates an ExecutionContext from the provided
+     * map data and executes the workflow. It's ideal for simple use cases where you have
+     * straightforward key-value input data and don't need fine-grained control over the
+     * execution context.
+     * 
+     * <p><strong>Simple Usage Examples:</strong>
+     * <pre>
+     * // Basic workflow execution with map input
+     * Map&lt;String, Object&gt; input = new HashMap&lt;&gt;();
+     * input.put("user.id", "user123");
+     * input.put("order.amount", 149.99);
+     * input.put("payment.method", "CREDIT_CARD");
+     * 
+     * StepResult result = engine.execute("orderProcessing", input);
+     * 
+     * if (result.isSuccess()) {
+     *     System.out.println("Order processed successfully");
+     *     // Access result data from StepResult context
+     *     String orderId = result.getContextValue("order.id", String.class);
+     *     Double finalAmount = result.getContextValue("order.final_amount", Double.class);
+     * } else {
+     *     System.err.println("Order processing failed: " + result.getMessage());
+     * }
+     * </pre>
+     * 
+     * <p><strong>Complex Data Types:</strong>
+     * <pre>
+     * // Using complex objects and collections
+     * Map&lt;String, Object&gt; input = new HashMap&lt;&gt;();
+     * input.put("customer.profile", customerProfile);  // POJO object
+     * input.put("order.items", Arrays.asList(item1, item2, item3));  // List
+     * input.put("shipping.options", shippingOptionsMap);  // Nested map
+     * 
+     * StepResult result = engine.execute("complexOrderFlow", input);
+     * </pre>
+     * 
+     * @param workflowName the name of the workflow to execute. Must exist in the FlowConfig.
+     * @param inputData map of key-value pairs to populate the execution context.
+     *                 Keys should match the data expected by workflow steps.
+     * @return StepResult containing the execution outcome and accumulated context data
+     * @throws IllegalArgumentException if workflowName is null, empty, or doesn't exist
+     * 
+     * @see #execute(String, ExecutionContext) for full context control
+     * @see StepResult#getContextValue(String, Class) for accessing result data
      */
     public StepResult execute(String workflowName, Map<String, Object> inputData) {
         ExecutionContext context = new ExecutionContext();
